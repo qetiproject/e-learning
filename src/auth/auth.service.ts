@@ -1,50 +1,39 @@
-import { Injectable } from '@nestjs/common';
-import { UserService } from 'src/auth/user/user.service';
-import { JwtService } from '@nestjs/jwt';
+import {
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User } from 'src/auth/user/entity/user.entity';
-import { UserModel, UserStatus } from 'src/auth/user/user.model';
-import { v4 as uuid } from 'uuid';
-import { RegisterUserDto } from 'src/auth/user/dto/register-user.dto';
+import { AuthCredentialsDto } from './dto/auth-credentials.dto';
+import { User } from './user.entity';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AuthService {
   constructor(
-    private userService: UserService,
-    private jwtService: JwtService,
-    @InjectRepository(User)
-    private userRepository: Repository<User>,
+    @InjectRepository(User) private authRepository: Repository<User>,
   ) {}
 
-  create(registerUserDto: RegisterUserDto): UserModel {
-    const { name, email, password, status } = registerUserDto;
+  async signup(authCredentialsDto: AuthCredentialsDto): Promise<void> {
+    const { username, password } = authCredentialsDto;
 
-    const user: UserModel = {
-      id: uuid(),
-      name,
-      email,
-      password,
-      status:
-        status != UserStatus.ADMINISTRATOR ? status : UserStatus.ADMINISTRATOR,
-    };
+    const salt = await bcrypt.genSalt();
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-    return user;
-    // return this.userRepository.save(registerUserDto);
-  }
+    const user = this.authRepository.create({
+      username,
+      password: hashedPassword,
+    });
 
-  async validateUser(email: string, password: string) {
-    const user = await this.userService.findByEmail(email);
-    if (user && user.password === password) {
-      return user;
+    try {
+      await this.authRepository.save(user);
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException('Username already exists');
+      } else {
+        throw new InternalServerErrorException();
+      }
     }
-    return null;
-  }
-
-  async login(user: any) {
-    const payload = { email: user.email, sub: user.id };
-    return {
-      access_token: this.jwtService.sign(payload),
-    };
   }
 }
